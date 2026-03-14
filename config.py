@@ -1,0 +1,8 @@
+device_id = "SB-Kdpr-001"
+area = "Kondapur"
+division = "Durgam Cheruvu"
+district = "Hyderabad"
+azure_connection_string = ""
+azure_container_name = ""
+API_URL = "https://sewage-bot.onrender.com/api/upload"
+mapbox_token = "pk.eyJ1Ijoic2h1YmhhbWd2IiwiYSI6ImNtZDV2cmJneDAydngyanFzaW1vNTM3M24ifQ.7Jb5OXpznWqjyMeAuiXhrQ"

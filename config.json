@@ -1,0 +1,10 @@
+{
+    "device_id": "UNKNOWN",
+    "area": "UNKNOWN",
+    "division": "UNKNOWN",
+    "district": "UNKNOWN",
+    "azure_connection_string": "",
+    "azure_container_name": "",
+    "API_URL": "https://sewage-bot.onrender.com/api/upload",
+    "mapbox_token": "pk.eyJ1Ijoic2h1YmhhbWd2IiwiYSI6ImNtZDV2cmJneDAydngyanFzaW1vNTM3M24ifQ.7Jb5OXpznWqjyMeAuiXhrQ"
+}

@@ -1,0 +1,13 @@
+# PyQt5 -- install manually oustise goilbally
+# PyQtWebEngine -- install manually outside globally
+python-dotenv
+opencv-python-headless
+numpy
+pyserial
+pytz
+psycopg2-binary
+
+azure-storage-blob
+azure-identity
+requests
+Pillow
