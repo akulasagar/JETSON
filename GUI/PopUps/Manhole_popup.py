@@ -120,7 +120,6 @@ def _load_manholes_from_db():
                 })
 
         logger.info(f"[MANHOLE-LOAD] Loaded {len(manholes)} manholes from DB")
-        logger.info(manholes)
         return manholes
 
     except Exception as e:

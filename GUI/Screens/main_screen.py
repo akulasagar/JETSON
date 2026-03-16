@@ -29,144 +29,222 @@ os.makedirs("captures/after", exist_ok=True)
 # Camera Thread  (matches dev_test_load.py logic)
 # ---------------------------------------------------------------------------
 class CameraThread(QThread):
-    frame_available   = pyqtSignal(QImage, int)
-    camera_error      = pyqtSignal(str, int)
+    frame_available = pyqtSignal(QImage, int)
+    camera_error = pyqtSignal(str, int)
     camera_reconnecting = pyqtSignal(str, int)
 
     def __init__(self, camera_index=0, parent=None):
         super().__init__(parent)
-        self.camera_index  = camera_index
-        self.running       = True
-        self.last_frame    = None   # raw BGR numpy array – used for capture
-        self.cap           = None
-        self.target_width  = 1280
+        self.camera_index = camera_index
+        self.running = True
+        self.last_frame = None
+        self.cap = None
+        self.target_width = 1280
         self.target_height = 720
 
-    # -- entry point ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Entry point
+    # ------------------------------------------------------------------
     def run(self):
         self._setup_usb_camera()
 
-    # -- USB camera with retry loop (same as dev_test_load.py) ---------------
+    # ------------------------------------------------------------------
+    # Camera connection logic
+    # ------------------------------------------------------------------
     def _setup_usb_camera(self):
-        # /dev/video0 for cam-index 0, /dev/video1 for cam-index 1
-        # fall back to whatever is available
-        device_index = self.camera_index
+
+        # Port groups for each camera
+        if self.camera_index == 0:
+            candidate_ports = [0, 1]  # /dev/video0 or /dev/video1
+        else:
+            candidate_ports = [2, 3]  # /dev/video2 or /dev/video3
+
         backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
 
         while self.running:
-            # ---- open ----
+
             if not self.cap or not self.cap.isOpened():
-                logger.info(f"[CAM-{self.camera_index}] Opening /dev/video{device_index}")
-                self.camera_reconnecting.emit(
-                    f"Connecting camera {self.camera_index + 1}…", self.camera_index
-                )
+
                 opened = False
-                for backend in backends:
-                    cap = cv2.VideoCapture(device_index, backend)
-                    if cap.isOpened():
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.target_width)
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_height)
-                        cap.set(cv2.CAP_PROP_FPS, 30)
-                        w   = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        h   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        fps = cap.get(cv2.CAP_PROP_FPS)
-                        logger.info(f"[CAM-{self.camera_index}] Opened /dev/video{device_index} "
-                                    f"via backend={backend} → {w}×{h} @ {fps:.1f} fps")
-                        self.cap = cap
-                        opened   = True
-                        self.camera_reconnecting.emit(
-                            f"Camera {self.camera_index + 1} connected", self.camera_index
-                        )
-                        if self.camera_index == 0:
-                            pass
+
+                for device_index in candidate_ports:
+
+                    logger.info(f"[CAM-{self.camera_index}] Trying /dev/video{device_index}")
+
+                    self.camera_reconnecting.emit(
+                        f"Connecting camera {self.camera_index + 1}…",
+                        self.camera_index
+                    )
+
+                    for backend in backends:
+
+                        cap = cv2.VideoCapture(device_index, backend)
+
+                        if cap.isOpened():
+
+                            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_width)
+                            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_height)
+                            cap.set(cv2.CAP_PROP_FPS, 30)
+
+                            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            fps = cap.get(cv2.CAP_PROP_FPS)
+
+                            logger.info(
+                                f"[CAM-{self.camera_index}] Connected on /dev/video{device_index} "
+                                f"{w}x{h} @ {fps:.1f} fps"
+                            )
+
+                            self.cap = cap
+                            opened = True
+
+                            self.camera_reconnecting.emit(
+                                f"Camera {self.camera_index + 1} connected",
+                                self.camera_index
+                            )
+
+                            break
+
+                        else:
+                            cap.release()
+
+                    if opened:
                         break
-                    else:
-                        cap.release()
 
                 if not opened:
-                    logger.error(f"[CAM-{self.camera_index}] Cannot open /dev/video{device_index}, "
-                                 "using simulation. Retrying…")
-                    self.camera_error.emit(
-                        f"Camera {self.camera_index + 1} unavailable", self.camera_index
+
+                    logger.error(
+                        f"[CAM-{self.camera_index}] Camera not found in ports {candidate_ports}"
                     )
+
+                    self.camera_error.emit(
+                        f"Camera {self.camera_index + 1} unavailable",
+                        self.camera_index
+                    )
+
                     self._emit_simulation_frame()
-                    time.sleep(5000)
+
+                    time.sleep(5)
                     continue
 
-            # ---- read loop ----
             self._read_frames(device_index)
 
+    # ------------------------------------------------------------------
+    # Frame read loop
+    # ------------------------------------------------------------------
     def _read_frames(self, device_index):
-        """Inner read loop. Returns when camera disconnects."""
+
         while self.running and self.cap and self.cap.isOpened():
+
             ret, frame = self.cap.read()
+
             if ret and frame is not None:
-                # Store raw BGR for capture
+
                 self.last_frame = frame.copy()
-                # Convert and emit
-                frame_resized = cv2.resize(frame, (self.target_width, self.target_height))
-                
-                # Draw a custom light-white center marker (crosshair with gap and center dot)
-                cx, cy = self.target_width // 2, self.target_height // 2
+
+                frame_resized = cv2.resize(
+                    frame, (self.target_width, self.target_height)
+                )
+
+                cx = self.target_width // 2
+                cy = self.target_height // 2
+
                 gap = 15
                 line_len = 18
-                color = (240, 240, 240)  # Light white in BGR
+                color = (240, 240, 240)
                 thickness = 2
-                
-                # Center dot
-                #cv2.circle(frame_resized, (cx, cy), 4, color, -1)
-                
-                # 4 Lines (Top, Bottom, Left, Right)
-                cv2.line(frame_resized, (cx - gap - line_len, cy), (cx - gap, cy), color, thickness, cv2.LINE_AA) # Left
-                cv2.line(frame_resized, (cx + gap, cy), (cx + gap + line_len, cy), color, thickness, cv2.LINE_AA) # Right
-                cv2.line(frame_resized, (cx, cy - gap - line_len), (cx, cy - gap), color, thickness, cv2.LINE_AA) # Top
-                cv2.line(frame_resized, (cx, cy + gap), (cx, cy + gap + line_len), color, thickness, cv2.LINE_AA) # Bottom
 
-                frame_rgb     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-                h, w, ch      = frame_rgb.shape
-                q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format_RGB888)
+                cv2.line(frame_resized, (cx - gap - line_len, cy), (cx - gap, cy),
+                         color, thickness, cv2.LINE_AA)
+                cv2.line(frame_resized, (cx + gap, cy), (cx + gap + line_len, cy),
+                         color, thickness, cv2.LINE_AA)
+                cv2.line(frame_resized, (cx, cy - gap - line_len), (cx, cy - gap),
+                         color, thickness, cv2.LINE_AA)
+                cv2.line(frame_resized, (cx, cy + gap), (cx, cy + gap + line_len),
+                         color, thickness, cv2.LINE_AA)
+
+                frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+
+                h, w, ch = frame_rgb.shape
+
+                q_img = QImage(
+                    frame_rgb.data,
+                    w,
+                    h,
+                    ch * w,
+                    QImage.Format_RGB888
+                )
+
                 self.frame_available.emit(q_img.copy(), self.camera_index)
+
             else:
-                logger.warning(f"[CAM-{self.camera_index}] Frame read failed – reconnecting…")
+
+                logger.warning(
+                    f"[CAM-{self.camera_index}] Frame read failed – reconnecting…"
+                )
+
                 if self.cap:
                     self.cap.release()
                     self.cap = None
+
                 self.camera_reconnecting.emit(
-                    f"Camera {self.camera_index + 1} disconnected", self.camera_index
+                    f"Camera {self.camera_index + 1} disconnected",
+                    self.camera_index
                 )
-                if self.camera_index == 0:
-                    pass
+
                 break
-            time.sleep(0.033)   # ~30 fps
+
+            time.sleep(0.033)
 
         if self.cap and self.cap.isOpened():
             self.cap.release()
             self.cap = None
 
+    # ------------------------------------------------------------------
+    # Simulation frame
+    # ------------------------------------------------------------------
     def _emit_simulation_frame(self):
-        """Show a dark "No Signal" frame while camera is unavailable."""
+
         frame = np.zeros((self.target_height, self.target_width, 3), dtype=np.uint8)
+
         color = (40, 40, 50) if self.camera_index == 0 else (30, 30, 45)
+
         frame[:] = color
-        cv2.putText(frame,
-                    f"Camera {self.camera_index + 1} – No Signal",
-                    (350, self.target_height // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (90, 90, 100), 2)
+
+        cv2.putText(
+            frame,
+            f"Camera {self.camera_index + 1} – No Signal",
+            (350, self.target_height // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.2,
+            (90, 90, 100),
+            2
+        )
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch  = frame_rgb.shape
-        q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format_RGB888)
+
+        h, w, ch = frame_rgb.shape
+
+        q_img = QImage(
+            frame_rgb.data,
+            w,
+            h,
+            ch * w,
+            QImage.Format_RGB888
+        )
+
         self.frame_available.emit(q_img.copy(), self.camera_index)
 
+    # ------------------------------------------------------------------
     def get_last_frame(self):
-        """Return the latest raw BGR frame, or None."""
         return self.last_frame
 
+    # ------------------------------------------------------------------
     def stop(self):
         self.running = False
         if self.cap:
             self.cap.release()
         self.wait()
-
 
 # ---------------------------------------------------------------------------
 # GPS Thread
@@ -434,8 +512,8 @@ class GasThread(QThread):
                     else:
                         _no_data_ticks += 1
 
-                        if _no_data_ticks >= 30:
-                            logger.warning("[GAS] No data received for 3s. Reconnecting...")
+                        if _no_data_ticks >= 300:
+                            logger.warning("[GAS] No data received. Reconnecting...")
                             break
 
                     time.sleep(0.1)
@@ -741,19 +819,19 @@ class ManholeWidget(QWidget):
         op_grid = QGridLayout()
         op_grid.setSpacing(10)
 
-        start_btn = QPushButton("▶\nStart Operation")
-        start_btn.setFixedHeight(80)
-        start_btn.setStyleSheet(
+        self.start_btn = QPushButton("▶\nStart Operation")
+        self.start_btn.setFixedHeight(80)
+        self.start_btn.setStyleSheet(
             "background-color: #00c853; color: white; font-size: 13px; font-weight: bold; border-radius: 8px;"
         )
-        start_btn.clicked.connect(self.handle_start_operation)
+        self.start_btn.clicked.connect(self.handle_start_operation)
 
-        stop_btn = QPushButton("⏸\nStop Operation")
-        stop_btn.setFixedHeight(80)
-        stop_btn.setStyleSheet(
+        self.stop_btn = QPushButton("⏸\nStop Operation")
+        self.stop_btn.setFixedHeight(80)
+        self.stop_btn.setStyleSheet(
             "background-color: #ff1744; color: white; font-size: 13px; font-weight: bold; border-radius: 8px;"
         )
-        stop_btn.clicked.connect(self.handle_stop_operation)
+        self.stop_btn.clicked.connect(self.handle_stop_operation)
 
         switch_btn = QPushButton("🔄\nSwitch Camera")
         switch_btn.setFixedHeight(80)
@@ -779,8 +857,8 @@ class ManholeWidget(QWidget):
         t_layout.addWidget(t_icon)
         t_layout.addWidget(self.timer_val)
 
-        op_grid.addWidget(start_btn,  0, 0)
-        op_grid.addWidget(stop_btn,   0, 1)
+        op_grid.addWidget(self.start_btn,  0, 0)
+        op_grid.addWidget(self.stop_btn,   0, 1)
         op_grid.addWidget(switch_btn, 1, 0)
         op_grid.addWidget(timer_box,  1, 1)
         op_frame_layout.addLayout(op_grid)
@@ -893,6 +971,12 @@ class ManholeWidget(QWidget):
             logger.info(f"[OP] Started – Manhole: {self.current_manhole_id}  "
                         f"at {self.operation_start_time.strftime('%H:%M:%S')}")
             voice_module.speak_dual("Operation started", "ఆపరేషన్ ప్రారంభమైంది")
+            
+            if hasattr(self, 'start_btn'):
+                self.start_btn.setDisabled(True)
+            main_win = self.window()
+            if hasattr(main_win, 'pipe_screen') and hasattr(main_win.pipe_screen, 'start_btn'):
+                main_win.pipe_screen.start_btn.setDisabled(True)
 
     def handle_stop_operation(self):
         if not self.operation_timer.isActive():
@@ -958,6 +1042,12 @@ class ManholeWidget(QWidget):
         logger.info(f"[OP] Stopped and queued: {op_id}")
         voice_module.speak_dual("Operation completed", "ఆపరేషన్ పూర్తయింది")
         voice_module.speak_dual("Uploading is in progress", "అప్లోడ్ అవుతోంది")
+        
+        if hasattr(self, 'start_btn'):
+            self.start_btn.setEnabled(True)
+        main_win = self.window()
+        if hasattr(main_win, 'pipe_screen') and hasattr(main_win.pipe_screen, 'start_btn'):
+            main_win.pipe_screen.start_btn.setEnabled(True)
 
     def _update_operation_time(self):
         elapsed = int(time.time() - self._raw_start)
