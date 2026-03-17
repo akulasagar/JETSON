@@ -44,7 +44,7 @@ class Uploader:
     def __init__(
         self,
         api_url=None,
-        max_retries=3,
+        max_retries=1,
         retry_delay=5
     ):
         """

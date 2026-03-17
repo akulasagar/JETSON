@@ -512,7 +512,7 @@ class GasThread(QThread):
                     else:
                         _no_data_ticks += 1
 
-                        if _no_data_ticks >= 300:
+                        if _no_data_ticks >= 5000:
                             logger.warning("[GAS] No data received. Reconnecting...")
                             break
 
@@ -744,6 +744,10 @@ class ManholeWidget(QWidget):
         self.current_manhole_id   = "N/A"
         self.operation_start_time = None   # datetime object
         self.operation_end_time   = None
+
+        # Manhole location (from DB, set when manhole is selected in popup)
+        self.manhole_lat = 0.0
+        self.manhole_lon = 0.0
         
         # Depth measurements
         self.before_depth = None
@@ -753,6 +757,9 @@ class ManholeWidget(QWidget):
         self.gps_lat = 0.0
         self.gps_lon = 0.0
         self.gps_fix = False
+
+        # Gas data accumulation for averaging over the operation
+        self._gas_readings = []   # list of dicts, one per sensor cycle
 
         # Camera thread references set by MainDashboard
         self.cam0_thread = None
@@ -955,12 +962,17 @@ class ManholeWidget(QWidget):
         popup = StartOperationPopup(self)
         if popup.exec_() == QDialog.Accepted:
             self.current_manhole_id   = popup.manhole_id
+            self.manhole_lat          = popup.manhole_lat
+            self.manhole_lon          = popup.manhole_lon
             self.operation_start_time = datetime.datetime.now()
             self.operation_end_time   = None
 
             # Capture "before" frame
             op_id = f"{self.current_manhole_id}_{self.operation_start_time.strftime('%Y%m%d_%H%M%S')}"
             self._capture_frame("before", op_id)
+
+            # Clear previous gas accumulation and start fresh
+            self._gas_readings = []
 
             # Start elapsed timer
             self._raw_start = time.time()
@@ -969,6 +981,7 @@ class ManholeWidget(QWidget):
 
             self.manhole_id_changed.emit(self.current_manhole_id)
             logger.info(f"[OP] Started – Manhole: {self.current_manhole_id}  "
+                        f"Location: ({self.manhole_lat}, {self.manhole_lon})  "
                         f"at {self.operation_start_time.strftime('%H:%M:%S')}")
             voice_module.speak_dual("Operation started", "ఆపరేషన్ ప్రారంభమైంది")
             
@@ -1011,6 +1024,19 @@ class ManholeWidget(QWidget):
             except Exception as e:
                 logger.error(f"Error loading config.py: {e}")
 
+            # Calculate average gas values over the entire operation
+            avg_gas_data = {}
+            if self._gas_readings:
+                all_keys = set()
+                for rd in self._gas_readings:
+                    all_keys.update(rd.keys())
+                for key in all_keys:
+                    vals = [rd[key] for rd in self._gas_readings if key in rd]
+                    avg_gas_data[key] = round(sum(vals) / len(vals), 2) if vals else 0.0
+                logger.info(f"[OP] Gas avg over {len(self._gas_readings)} samples: {avg_gas_data}")
+            else:
+                logger.warning("[OP] No gas readings collected during operation.")
+
             main_win.uploader.queue_operation(
                 operation_id=op_id,
                 operation_type='manhole_cleaning',
@@ -1022,11 +1048,11 @@ class ManholeWidget(QWidget):
                 start_time=self.operation_start_time,
                 end_time=self.operation_end_time,
                 duration_seconds=elapsed_seconds,
-                gas_data=getattr(main_win, 'latest_gas_data', {}),
+                gas_data=avg_gas_data,
                 location={
-                    'latitude': self.gps_lat,
-                    'longitude': self.gps_lon,
-                    'gps_fix': self.gps_fix
+                    'latitude': self.manhole_lat,
+                    'longitude': self.manhole_lon,
+                    'gps_fix': self.manhole_lat != 0.0 and self.manhole_lon != 0.0
                 },
                 config=config_dict
             )
@@ -1035,8 +1061,11 @@ class ManholeWidget(QWidget):
         
         self.timer_val.setText("0:00")
         self.current_manhole_id = "N/A"
+        self.manhole_lat = 0.0
+        self.manhole_lon = 0.0
         self.before_depth = None
         self.after_depth = None
+        self._gas_readings = []   # clear accumulated gas data
         self.manhole_id_changed.emit("N/A")
         self.depths_changed.emit(0.0, 0.0)
         logger.info(f"[OP] Stopped and queued: {op_id}")
@@ -1232,6 +1261,10 @@ class MainDashboard(QMainWindow):
 
     def _handle_gas_update(self, data):
         self.latest_gas_data = data
+
+        # Accumulate readings while an operation is running
+        if self.manhole_screen.operation_timer.isActive():
+            self.manhole_screen._gas_readings.append(dict(data))
 
     # -- Upload Status Handler -----------------------------------------------
     def _handle_upload_status(self, operation_id, status, message, details):

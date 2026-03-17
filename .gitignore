@@ -3,3 +3,4 @@ venv
 /voice_cache
 /captures
 /models
+__pycache__

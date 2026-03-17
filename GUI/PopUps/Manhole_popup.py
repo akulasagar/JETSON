@@ -334,6 +334,8 @@ class StartOperationPopup(QDialog):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setFixedSize(1100, 780)
         self.manhole_id = None
+        self.manhole_lat = 0.0
+        self.manhole_lon = 0.0
         self._bridge = _Bridge()
         self._bridge.manhole_selected.connect(self._on_map_selection)
         self._init_ui()
@@ -841,21 +843,44 @@ class StartOperationPopup(QDialog):
     def _on_map_selection(self, manhole_id: str):
         self.manhole_id = manhole_id
         self._manual_input.setText(manhole_id)
-        # In a real app we'd lookup coordinates
-        self._selected_coord_val.setText("Coordinates Selected")
+        # Look up the manhole coordinates from loaded data
+        all_mh = _load_manholes()
+        for mh in all_mh:
+            if str(mh['id']) == str(manhole_id):
+                self.manhole_lat = mh['lat']
+                self.manhole_lon = mh['lon']
+                self._selected_coord_val.setText(
+                    f"{manhole_id}  ({mh['lat']:.6f}, {mh['lon']:.6f})"
+                )
+                return
+        # If not found in data, keep zeros
+        self._selected_coord_val.setText(f"{manhole_id} (coords not found)")
 
     def _on_nearby_selected(self, mh):
         self.manhole_id = mh["id"]
+        self.manhole_lat = mh["lat"]
+        self.manhole_lon = mh["lon"]
 
         self._manual_input.setText(self.manhole_id)
 
         self._selected_coord_val.setText(
             f"{mh['id']}  ({mh['lat']:.6f}, {mh['lon']:.6f})"
-    )
+        )
 
     def _on_manual_use(self):
-        self.manhole_id = self._manual_input.text()
-        self._selected_coord_val.setText(f"Manual: {self.manhole_id}")
+        self.manhole_id = self._manual_input.text().strip()
+        # Try to look up coordinates for manually entered ID
+        all_mh = _load_manholes()
+        for mh in all_mh:
+            if str(mh['id']) == str(self.manhole_id):
+                self.manhole_lat = mh['lat']
+                self.manhole_lon = mh['lon']
+                self._selected_coord_val.setText(
+                    f"{self.manhole_id}  ({mh['lat']:.6f}, {mh['lon']:.6f})"
+                )
+                return
+        # If not found, keep zeros
+        self._selected_coord_val.setText(f"Manual: {self.manhole_id} (coords not found)")
 
 # ---------------------------------------------------------------------------
 # Stop Operation Popup
