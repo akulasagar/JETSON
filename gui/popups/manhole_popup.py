@@ -1,239 +1,30 @@
+"""Start/Stop operation popups.
+
+StartOperationPopup: Shows a map with nearby manholes for selection.
+StopOperationPopup: Shows operation summary after stopping.
+
+Refactored to use shared modules from utils/ and core/ instead of
+defining DB/geo logic inline.
+"""
 import os
-import serial
-import csv
-import math
 import logging
-import psycopg2
-from psycopg2 import extras
-from urllib.parse import urlparse
+
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFrame, QApplication,
                              QSizePolicy, QWidget, QLineEdit, QGridLayout, QMessageBox)
-from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSlot, pyqtSignal
+from PyQt5.QtCore import Qt, QUrl, QObject, pyqtSlot, pyqtSignal, QThread
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
 from PyQt5.QtWebChannel import QWebChannel
-from dotenv import load_dotenv
+
+from utils.manhole_loader import load_manholes, nearby_manholes, NEARBY_RADIUS_M
 
 logger = logging.getLogger(__name__)
-load_dotenv()
 
 # ---------------------------------------------------------------------------
 # GPS placeholder
 # ---------------------------------------------------------------------------
 CURRENT_LAT = 17.557055
 CURRENT_LON = 78.4708128
-NEARBY_RADIUS_M = 50 
-    
-# ---------------------------------------------------------------------------
-# Manhole CSV & DB
-# ---------------------------------------------------------------------------
-MANHOLE_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "manhole.csv")
-DATABASE_URL = os.getenv("DATABASE_URL")
-SECTION_NAME = "kondapur"
-#TABLE_NAME = f"{SECTION_NAME}_manholes"
-TABLE_NAME = f"master_manholes"
-
-
-def _parse_jdbc_url(jdbc_url):
-    """Convert JDBC URL to psycopg2 parameters"""
-    if jdbc_url.startswith("jdbc:"):
-        jdbc_url = jdbc_url.replace("jdbc:", "")
-
-    parsed = urlparse(jdbc_url)
-
-    return {
-        "host": parsed.hostname,
-        "port": parsed.port or 5432,
-        "dbname": parsed.path.lstrip("/")
-    }
-
-# global connection + cursor
-_conn = None
-_cursor = None
-_cached_manholes = None
-
-def _get_db_connection():
-    """Returns existing connection or creates a new one."""
-    global _conn
-
-    if _conn and not _conn.closed:
-        return _conn
-
-    try:
-        db_url = DATABASE_URL
-        logger.info(f"[MANHOLE-DB] Database URL: {db_url}")
-        if not db_url:
-            logger.error("[MANHOLE-DB] No DATABASE_URL found.")
-            return None
-
-        logger.info("[MANHOLE-DB] Establishing new connection...")
-        _conn = psycopg2.connect(db_url, connect_timeout=5)
-
-        return _conn
-
-    except Exception as e:
-        logger.error(f"[MANHOLE-DB] ❌ Database connection failed: {e}")
-        return None
-
-
-def _load_manholes_from_db():
-    """
-    Load manholes from PostgreSQL using existing connection logic.
-    Returns None if DB fails so CSV fallback can occur.
-    """
-
-    global _cursor, _conn
-
-    try:
-        conn = _get_db_connection()
-        if not conn:
-            logger.warning("[MANHOLE-DB] No DB connection available.")
-            return None
-
-        if not _cursor or _cursor.closed:
-            _cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
-
-        table_name = f"{TABLE_NAME}"
-
-        query = f"""
-        SELECT
-            mh_id AS id,
-            mh_latitude AS lat,
-            mh_longitude AS lon
-        FROM {table_name}
-        """
-
-        logger.debug(f"[MANHOLE-DB] Executing query: {query}")
-
-        _cursor.execute(query)
-
-        rows = _cursor.fetchall()
-
-        manholes = []
-
-        for r in rows:
-            if r["lat"] is not None and r["lon"] is not None:
-                manholes.append({
-                    "id": str(r["id"]),
-                    "lat": float(r["lat"]),
-                    "lon": float(r["lon"])
-                })
-
-        logger.info(f"[MANHOLE-LOAD] Loaded {len(manholes)} manholes from DB")
-        return manholes
-
-    except Exception as e:
-        logger.warning(f"[MANHOLE-DB] DB load failed, fallback to CSV: {e}")
-
-        # reset connection
-        try:
-            if _cursor:
-                _cursor.close()
-        except:
-            pass
-
-        try:
-            if _conn:
-                _conn.close()
-        except:
-            pass
-
-        _cursor = None
-        _conn = None
-
-        return None
-
-
-def _load_manholes():
-    global _cached_manholes
-    if _cached_manholes is not None:
-        return _cached_manholes
-
-    # 1️⃣ Try DB first
-    db_data = _load_manholes_from_db()
-    if db_data:
-        _cached_manholes = db_data
-        return db_data
-
-    # 2️⃣ Fallback to CSV
-    manholes = []
-    csv_path = os.path.abspath(MANHOLE_CSV)
-
-    if not os.path.exists(csv_path):
-        return manholes
-
-    id_fields = ["mh_id"]
-    lat_fields = ["mh_latitude"]
-    lon_fields = ["mh_longitude"]
-
-    try:
-        with open(csv_path, "r") as f:
-            reader = csv.DictReader(f)
-
-            for row in reader:
-
-                raw_id = None
-                for field in id_fields:
-                    if field in row and row[field]:
-                        raw_id = row[field].strip()
-                        break
-
-                if not raw_id:
-                    continue
-
-                lat = lon = None
-
-                for field in lat_fields:
-                    if field in row and row[field]:
-                        try:
-                            lat = float(row[field].strip())
-                            break
-                        except:
-                            pass
-
-                for field in lon_fields:
-                    if field in row and row[field]:
-                        try:
-                            lon = float(row[field].strip())
-                            break
-                        except:
-                            pass
-
-                if lat is not None and lon is not None:
-                    manholes.append({
-                        "id": raw_id,
-                        "lat": lat,
-                        "lon": lon
-                    })
-
-    except Exception as e:
-        logger.error(f"CSV error: {e}")
-
-    logger.info(f"Loaded {len(manholes)} manholes from CSV")
-    
-    _cached_manholes = manholes
-    return manholes
-
-
-def _haversine_m(lat1, lon1, lat2, lon2):
-    R = 6_371_000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam / 2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def _nearby_manholes(lat, lon, radius_m=NEARBY_RADIUS_M):
-    all_mh = _load_manholes()
-    nearby = []
-    for mh in all_mh:
-        d = _haversine_m(lat, lon, mh["lat"], mh["lon"])
-        if d <= radius_m:
-            nearby.append({**mh, "dist_m": round(d)})
-    nearby.sort(key=lambda x: x["dist_m"])
-    return nearby
-
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +101,8 @@ class Card(QFrame):
         """)
 
 # ---------------------------------------------------------------------------
-# Popup
+# Data Loader Thread
 # ---------------------------------------------------------------------------
-from PyQt5.QtCore import QThread, pyqtSignal
-
 class DataLoaderThread(QThread):
     data_loaded = pyqtSignal(list)
 
@@ -324,9 +113,12 @@ class DataLoaderThread(QThread):
         self.radius_m = radius_m
 
     def run(self):
-        nearby = _nearby_manholes(self.lat, self.lon, self.radius_m)
+        nearby = nearby_manholes(self.lat, self.lon, self.radius_m)
         self.data_loaded.emit(nearby)
 
+# ---------------------------------------------------------------------------
+# Popup
+# ---------------------------------------------------------------------------
 class StartOperationPopup(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -347,7 +139,6 @@ class StartOperationPopup(QDialog):
         self.captured_latitude = 0.0
         self.captured_longitude = 0.0
         self.gps_fix = False
-        # self._init_gps() # Disable local GPS init, use parent's data
 
     def _init_ui(self):
         # Outer container for round corners
@@ -410,7 +201,7 @@ class StartOperationPopup(QDialog):
         hint_card.setStyleSheet("QFrame { background-color: #F8F9FA; border-radius: 12px; border: 1px solid #E0E0E0; }")
         hint_lay = QHBoxLayout(hint_card)
         hint_lay.setContentsMargins(15, 0, 15, 0)
-        hint_icon = QLabel("📍") # Red icon substitute
+        hint_icon = QLabel("📍")
         hint_text = QLabel("click a manhole marker to select it")
         hint_text.setStyleSheet("color: #333; font-size: 14px; border: none;")
         hint_icon.setStyleSheet("border: none; color: #FF0000; font-size: 18px;")
@@ -590,58 +381,6 @@ class StartOperationPopup(QDialog):
         self._load_map_and_data()
     
 
-    def _init_gps(self):
-        try:
-            self.gps_serial = serial.Serial(
-                self.gps_port,
-                self.gps_baudrate,
-                timeout=1
-            )
-            logger.info("[GPS] Connected to GPS device")
-
-        except Exception as e:
-            logger.warning(f"[GPS] Connection failed: {e}")
-            self.gps_serial = None
-
-    def handle_confirm_select(self):
-        """Validates manhole ID before accepting the dialog."""
-        # Use either manual input or selection from map/list
-        self.manhole_id = self._manual_input.text().strip()
-        
-        if not self.manhole_id or self.manhole_id == "":
-            QMessageBox.warning(self, "Invalid Selection", 
-                               "Please select a manhole from the map or enter a valid Manhole ID to start the operation.")
-            return
-            
-        self.accept()
-
-
-    # def _read_gps(self):
-    #     if not self.gps_serial:
-    #         return
-
-    #     try:
-    #         line = self.gps_serial.readline().decode(errors="ignore")
-
-    #         # Example NMEA parsing for GGA
-    #         if line.startswith("$GNGGA") or line.startswith("$GPGGA"):
-    #             parts = line.split(",")
-
-    #             if parts[2] and parts[4]:
-    #                 lat = float(parts[2])
-    #                 lon = float(parts[4])
-
-    #                 lat = (lat // 100) + ((lat % 100) / 60)
-    #                 lon = (lon // 100) + ((lon % 100) / 60)
-
-    #                 self.captured_latitude = lat
-    #                 self.captured_longitude = lon
-    #                 self.gps_fix = True
-
-    #     except Exception:
-    #         pass
-
-
     def _read_gps(self):
         # Check GPS serial exists
         if not hasattr(self, "gps_serial") or self.gps_serial is None:
@@ -692,6 +431,17 @@ class StartOperationPopup(QDialog):
         except Exception as e:
             logger.debug(f"[GPS] Read error: {e}")
 
+    def handle_confirm_select(self):
+        """Validates manhole ID before accepting the dialog."""
+        self.manhole_id = self._manual_input.text().strip()
+        
+        if not self.manhole_id or self.manhole_id == "":
+            QMessageBox.warning(self, "Invalid Selection", 
+                               "Please select a manhole from the map or enter a valid Manhole ID to start the operation.")
+            return
+            
+        self.accept()
+
     def _get_valid_gps(self):
         """
         Returns valid GPS coordinates.
@@ -709,7 +459,7 @@ class StartOperationPopup(QDialog):
                 self.gps_fix = True
                 return float(parent.gps_lat), float(parent.gps_lon)
 
-        # 2️⃣ CURRENT_LAT / CURRENT_LON fallback
+        # Fallback
         try:
             lat = float(CURRENT_LAT)
             lon = float(CURRENT_LON)
@@ -724,46 +474,6 @@ class StartOperationPopup(QDialog):
         logger.warning("[GPS] No valid GPS found")
         return None, None
 
-    # def _load_map_and_data(self):
-    #     nearby = _nearby_manholes(CURRENT_LAT, CURRENT_LON, NEARBY_RADIUS_M)
-    #     html = _build_leaflet_html(CURRENT_LAT, CURRENT_LON, nearby, NEARBY_RADIUS_M)
-    #     self._web.setHtml(html, QUrl("about:blank"))
-
-    #     # Populate table
-    #     for i in reversed(range(self._nearby_list_lay.count())):
-    #         self._nearby_list_lay.itemAt(i).widget().setParent(None)
-
-    #     for mh in nearby[:5]:  # Show top 5
-    #         row = QFrame()
-    #         row.setStyleSheet("""
-    #             QFrame { border-bottom: 1px solid #F0F0F0; }
-    #             QFrame:hover { background:#F1F7F8; }
-    #         """)
-
-    #         row_lay = QHBoxLayout(row)
-
-    #         id_lbl = QLabel(mh["id"])
-    #         row_lay.addWidget(id_lbl, 1)
-
-    #         loc_btn = QPushButton(f"{mh['lat']:.4f},{mh['lon']:.4f}")
-    #         loc_btn.setStyleSheet("""
-    #             QPushButton {
-    #                 color: #1A92A4;
-    #                 border: none;
-    #                 text-decoration: underline;
-    #                 background: transparent;
-    #                 text-align: left;
-    #             }
-    #         """)
-
-    #         row_lay.addWidget(loc_btn, 2)
-
-    #         # click events
-    #         loc_btn.clicked.connect(lambda _, m=mh: self._on_nearby_selected(m))
-    #         row.mousePressEvent = lambda e, m=mh: self._on_nearby_selected(m)
-
-    #         self._nearby_list_lay.addWidget(row)
-
     def _load_map_and_data(self):
         self._read_gps()
         lat, lon = self._get_valid_gps()
@@ -777,7 +487,7 @@ class StartOperationPopup(QDialog):
             self._lon_val.setText("0.0000000000")
             lat, lon = CURRENT_LAT, CURRENT_LON
 
-        # Show a loading placeholder in the Web Engine
+        # Show a loading placeholder
         self._web.setHtml("<html><body style='display:flex;justify-content:center;align-items:center;height:100%;font-family:sans-serif;color:#666;'><h2>Loading map and nearby manholes...</h2></body></html>", QUrl("about:blank"))
 
         # Clear previous rows
@@ -786,7 +496,7 @@ class StartOperationPopup(QDialog):
             if w:
                 w.deleteLater()
                 
-        # Add a loading label to nearby list
+        # Add a loading label
         loading_lbl = QLabel("Loading nearby manholes...")
         loading_lbl.setStyleSheet("color: #666; padding: 10px;")
         self._nearby_list_lay.addWidget(loading_lbl)
@@ -844,7 +554,7 @@ class StartOperationPopup(QDialog):
         self.manhole_id = manhole_id
         self._manual_input.setText(manhole_id)
         # Look up the manhole coordinates from loaded data
-        all_mh = _load_manholes()
+        all_mh = load_manholes()
         for mh in all_mh:
             if str(mh['id']) == str(manhole_id):
                 self.manhole_lat = mh['lat']
@@ -870,7 +580,7 @@ class StartOperationPopup(QDialog):
     def _on_manual_use(self):
         self.manhole_id = self._manual_input.text().strip()
         # Try to look up coordinates for manually entered ID
-        all_mh = _load_manholes()
+        all_mh = load_manholes()
         for mh in all_mh:
             if str(mh['id']) == str(self.manhole_id):
                 self.manhole_lat = mh['lat']
@@ -889,7 +599,7 @@ class StopOperationPopup(QDialog):
     def __init__(self, manhole_id, elapsed_time, start_time=None, end_time=None, before_depth=None, after_depth=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Operation Stopped")
-        self.setFixedSize(460, 380) # Increased height
+        self.setFixedSize(460, 380)
         self.setStyleSheet("background-color: #f0f2f5;")
         self.manhole_id = manhole_id
         self.elapsed_time = elapsed_time

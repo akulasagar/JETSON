@@ -1,3 +1,11 @@
+"""Depth measurement popup dialog.
+
+Provides the UI for measuring manhole depth before and after cleaning,
+using the RealisticManholeWidget for visualization and communicating
+with the depth sensor thread.
+
+Refactored to import from new module paths.
+"""
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QFrame, QSizePolicy, QGridLayout, QMessageBox
@@ -5,21 +13,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import pyqtSignal, QTimer, Qt, QRect
 from PyQt5.QtGui import QColor, QFont
 import logging
-import serial
 import time
-import threading
 import os
 import sys
-import voice_module
 
-# Ensure root dir is in sys.path so RealisticManholeWidget can be found
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
-
-import re
-from RealisticManholeWidget import RealisticManholeWidget
+from gui.widgets.realistic_manhole import RealisticManholeWidget
+from core import voice_module
 
 logger = logging.getLogger(__name__)
 
@@ -371,8 +370,6 @@ class MeasureDepthPopup(QDialog):
         if not self.is_measuring: return
         self.is_measuring = False
         
-        # Only send the manual stop command if the user clicked the stop button.
-        # If the load cell triggered and it's auto-returning, we do nothing.
         if send_cmd:
             self.send_serial_command("s")
         

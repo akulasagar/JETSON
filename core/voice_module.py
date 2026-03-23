@@ -1,3 +1,10 @@
+"""Text-to-speech voice module.
+
+Provides speak() and speak_dual() functions that queue text for
+background TTS playback using piper (primary) or espeak-ng (fallback).
+
+Improvement: Thread starts lazily on first use rather than at import time.
+"""
 import os
 import hashlib
 import platform
@@ -13,11 +20,13 @@ SYSTEM = platform.system()
 voice_queue = queue.Queue()
 
 # Paths
-_BASE_DIR = os.path.dirname(__file__)
-_EN_MODEL = os.path.join(_BASE_DIR, "models", "en_US-amy-low.onnx")
-_TE_MODEL = os.path.join(_BASE_DIR, "models", "te_IN-maya-medium.onnx")
-_PIPER_BIN = os.path.join(_BASE_DIR, "venv", "bin", "piper")
-_CACHE_DIR = os.path.join(_BASE_DIR, "voice_cache")
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Models are in the project root's models/ dir
+_PROJECT_ROOT = os.path.dirname(_BASE_DIR)
+_EN_MODEL = os.path.join(_PROJECT_ROOT, "models", "en_US-amy-low.onnx")
+_TE_MODEL = os.path.join(_PROJECT_ROOT, "models", "te_IN-maya-medium.onnx")
+_PIPER_BIN = os.path.join(_PROJECT_ROOT, "venv", "bin", "piper")
+_CACHE_DIR = os.path.join(_PROJECT_ROOT, "voice_cache")
 
 
 def _get_cache_path(text, lang):
@@ -116,15 +125,31 @@ def windows_voice_worker():
         voice_queue.task_done()
 
 
-if SYSTEM == "Windows":
-    voice_thread = threading.Thread(target=windows_voice_worker, daemon=True)
-else:
-    voice_thread = threading.Thread(target=linux_voice_worker, daemon=True)
+# Lazy thread start — only creates the thread on first use
+_voice_thread = None
+_thread_lock = threading.Lock()
 
-voice_thread.start()
+
+def _ensure_thread_started():
+    """Start the voice worker thread if not already running."""
+    global _voice_thread
+    if _voice_thread is not None:
+        return
+
+    with _thread_lock:
+        if _voice_thread is not None:
+            return
+
+        if SYSTEM == "Windows":
+            _voice_thread = threading.Thread(target=windows_voice_worker, daemon=True)
+        else:
+            _voice_thread = threading.Thread(target=linux_voice_worker, daemon=True)
+
+        _voice_thread.start()
 
 
 def speak(text, lang="en"):
+    _ensure_thread_started()
     voice_queue.put((text, lang))
 
 
