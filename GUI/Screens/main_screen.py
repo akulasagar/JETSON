@@ -983,7 +983,7 @@ class ManholeWidget(QWidget):
             logger.info(f"[OP] Started – Manhole: {self.current_manhole_id}  "
                         f"Location: ({self.manhole_lat}, {self.manhole_lon})  "
                         f"at {self.operation_start_time.strftime('%H:%M:%S')}")
-            voice_module.speak_dual("Operation started", "ఆపరేషన్ ప్రారంభమైంది")
+            voice_module.speak_dual("Operation started", "పని ప్రారంభమైంది")
             
             if hasattr(self, 'start_btn'):
                 self.start_btn.setDisabled(True)
@@ -1069,7 +1069,7 @@ class ManholeWidget(QWidget):
         self.manhole_id_changed.emit("N/A")
         self.depths_changed.emit(0.0, 0.0)
         logger.info(f"[OP] Stopped and queued: {op_id}")
-        voice_module.speak_dual("Operation completed", "ఆపరేషన్ పూర్తయింది")
+        voice_module.speak_dual("Operation completed", "పని పూర్తయింది")
         voice_module.speak_dual("Uploading is in progress", "అప్లోడ్ అవుతోంది")
         
         if hasattr(self, 'start_btn'):
@@ -1083,7 +1083,7 @@ class ManholeWidget(QWidget):
         mins, secs = divmod(elapsed, 60)
         self.timer_val.setText(f"{mins}:{secs:02d}")
         if elapsed > 0 and elapsed % 60 == 0:
-            voice_module.speak_dual("Operation is on process be safe and cautious", "ఆపరేషన్ కొనసాగుతోంది, సురక్షితంగా మరియు జాగ్రత్తగా ఉండండి")
+            voice_module.speak_dual("Operation is on process be safe and cautious", "పని కొనసాగుతోంది, సురక్షితంగా మరియు జాగ్రత్తగా ఉండండి")
 
     def update_feeds(self, main_pixmap, side_pixmap):
         if not main_pixmap.isNull():
