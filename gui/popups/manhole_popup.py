@@ -239,7 +239,7 @@ class StartOperationPopup(QDialog):
         m_label.setStyleSheet("color: #666; font-size: 13px; border: none;")
         
         m_input_lay = QHBoxLayout()
-        self._manual_input = QLineEdit("")
+        self._manual_input = QLineEdit("MH0623-01-1")
         self._manual_input.setStyleSheet("""
             QLineEdit { 
                 padding: 8px; border: 1px solid #DDD; border-radius: 5px; background: #F8F9FA;

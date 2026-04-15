@@ -20,8 +20,7 @@ from gui.screens.pipe_cleaning import PipeCleaningWidget
 from hardware.camera_thread import CameraThread
 from hardware.gps_thread import GPSThread
 from hardware.modbus_thread import ModbusThread
-from hardware.gas_thread import GasThread
-from hardware.depth_thread import DepthThread
+from hardware.unified_sensor_thread import UnifiedSensorThread
 from core.data_uploader import Uploader, UploadStatus
 from core.database import get_connection
 from core import voice_module
@@ -124,15 +123,17 @@ class MainDashboard(QMainWindow):
         self.modbus_thread.levels_updated.connect(self.pipe_screen.update_status_bars)
         self.modbus_thread.start()
 
-        # Start Gas Sensor Thread
-        self.gas_thread = GasThread()
+        # Start Unified Sensor Thread (Gas + Depth)
+        self.unified_sensor = UnifiedSensorThread()
+        
+        # Map attributes for legacy compatibility
+        self.gas_thread = self.unified_sensor
+        self.depth_thread = self.unified_sensor
+
         self.gas_thread.data_received.connect(self.pipe_screen.update_gas_data)
         self.gas_thread.data_received.connect(self._handle_gas_update)
-        self.gas_thread.start()
-
-        # Start Depth Thread (Centralized)
-        self.depth_thread = DepthThread()
-        self.depth_thread.start()
+        
+        self.unified_sensor.start()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -406,11 +407,10 @@ class MainDashboard(QMainWindow):
             self.cam0_thread.stop()
             self.cam1_thread.stop()
             self.gps_thread.stop()
-            self.gas_thread.stop()
+            if hasattr(self, 'unified_sensor'):
+                self.unified_sensor.stop()
             if hasattr(self, 'modbus_thread'):
                 self.modbus_thread.stop()
-            if hasattr(self, 'depth_thread'):
-                self.depth_thread.stop()
             if hasattr(self, 'uploader'):
                 self.uploader.stop_upload_thread()
             event.accept()

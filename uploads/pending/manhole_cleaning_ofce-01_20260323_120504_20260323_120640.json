@@ -1,0 +1,43 @@
+{
+  "operation_id": "ofce-01_20260323_120504",
+  "operation_type": "manhole_cleaning",
+  "before_path": "captures/before/ofce-01_20260323_120504_before.jpg",
+  "after_path": "captures/after/ofce-01_20260323_120504_after.jpg",
+  "video_path": null,
+  "before_depth": null,
+  "after_depth": null,
+  "config": {
+    "device_id": "UNKNOWN",
+    "area": "UNKNOWN",
+    "division": "UNKNOWN",
+    "district": "UNKNOWN",
+    "azure_connection_string": "",
+    "azure_container_name": ""
+  },
+  "location": {
+    "latitude": 0.0,
+    "longitude": 0.0,
+    "gps_fix": false
+  },
+  "start_time": "2026-03-23T12:05:04.131101",
+  "end_time": "2026-03-23T12:05:34.994326",
+  "duration_seconds": 30,
+  "manhole_id": "ofce-01",
+  "area": "Kondapur",
+  "division": "Durgam Cheruvu",
+  "district": "Hyderabad",
+  "device_id": "SK-Kdpr-001",
+  "pipe_inspection_starttime": null,
+  "pipe_inspection_endtime": null,
+  "pipe_inspection_operationtime": 0,
+  "gas_data": {
+    "CO": 5.36,
+    "CH4": 9.17,
+    "H2S": 8.79
+  },
+  "queue_time": "2026-03-23T12:05:38.141185",
+  "azure_success": false,
+  "api_success": false,
+  "needs_azure_retry": true,
+  "needs_api_retry": true
+}
